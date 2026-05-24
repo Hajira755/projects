@@ -1,0 +1,446 @@
+const scriptUrl = new URL(document.currentScript.src);
+const urlParams = new URLSearchParams(new URL(scriptUrl).search);
+const shop = urlParams.get("shop");
+console.log(shop);
+
+// make code work in all pages
+//if (window.location.href.indexOf("thank_you") > -1) {
+
+var pixels;
+var applicationStatus;
+var url =
+  "https://multi-tiktok-pixels-ivhda.ondigitalocean.app/getpixels?shop=" + shop;
+
+fetch(url)
+  .then((response) => response.json())
+  .then((result) => {
+    pixels = result.pixels;
+    applicationStatus = result.applicationStatus;
+    pixels.map((pixel) => {
+      console.log("script id " + pixel.pixelId);
+
+      !(function (w, d, t) {
+        w.TiktokAnalyticsObject = t;
+        var ttq = (w[t] = w[t] || []);
+        (ttq.methods = [
+          "page",
+          "track",
+          "identify",
+          "instances",
+          "debug",
+          "on",
+          "off",
+          "once",
+          "ready",
+          "alias",
+          "group",
+          "enableCookie",
+          "disableCookie",
+        ]),
+          (ttq.setAndDefer = function (t, e) {
+            t[e] = function () {
+              t.push([e].concat(Array.prototype.slice.call(arguments, 0)));
+            };
+          });
+        for (var i = 0; i < ttq.methods.length; i++)
+          ttq.setAndDefer(ttq, ttq.methods[i]);
+        (ttq.instance = function (t) {
+          for (var e = ttq._i[t] || [], n = 0; n < ttq.methods.length; n++)
+            ttq.setAndDefer(e, ttq.methods[n]);
+          return e;
+        }),
+          (ttq.load = function (e, n) {
+            var i = "https://analytics.tiktok.com/i18n/pixel/events.js";
+            (ttq._i = ttq._i || {}),
+              (ttq._i[e] = []),
+              (ttq._i[e]._u = i),
+              (ttq._t = ttq._t || {}),
+              (ttq._t[e] = +new Date()),
+              (ttq._o = ttq._o || {}),
+              (ttq._o[e] = n || {});
+            var o = document.createElement("script");
+            (o.type = "text/javascript"),
+              (o.async = !0),
+              (o.src = i + "?sdkid=" + e + "&lib=" + t);
+            var a = document.getElementsByTagName("script")[0];
+            a.parentNode.insertBefore(o, a);
+          });
+
+        ttq.load(pixel.pixelId);
+        ttq.page();
+      })(window, document, "ttq");
+    });
+
+    // trigger Add to cart
+    var atcButton = PIX_detectAddToCartButton();
+    if (atcButton !== null) {
+      atcButton.addEventListener("click", triggerAddToCartReport);
+    }
+    // trigger Complete Payment
+    if (
+      location.pathname.indexOf("/thank_you") > -1 ||
+      location.pathname.indexOf("/post_purchase") > -1
+    ) {
+      triggerCompletePaymentReport();
+    }
+    // trigger intit checkout
+    if (location.pathname.indexOf("/cart") > -1) {
+      var checkoutButton = PIX_detectCheckoutButton();
+      if (checkoutButton !== null) {
+        checkoutButton.addEventListener(
+          "click",
+          triggerCheckoutInitiationReport
+        );
+      }
+    } else {
+      window.EFFECTIVE_APPS_TPI_CART_LISTENER = setInterval(
+        PIX_waitForCartDrawer,
+        500
+      );
+    }
+  });
+
+function triggerCheckoutInitiationReport() {
+  pixels.map((pixel) => {
+    if (pixel.trackIc == true && applicationStatus == true) {
+      window.ttq.instance(pixel.pixelId).track("InitiateCheckout");
+    }
+  });
+  // send events to fbc
+  pixelsfb.map((pixel) => {
+    if (pixel.trackAdc == true && applicationStatus == true) {
+      sendeventtofb(pixel.pixelId, pixel.acesstoken, "InitiateCheckout");
+    }
+  });
+}
+
+function triggerAddToCartReport() {
+  pixels.map((pixel) => {
+    if (pixel.trackAdc == true && applicationStatus == true) {
+      window.ttq.instance(pixel.pixelId).track("AddToCart");
+    }
+  });
+  // send events to fbc
+  pixelsfb.map((pixel) => {
+    if (pixel.trackAdc == true && applicationStatus == true) {
+      sendeventtofb(pixel.pixelId, pixel.acesstoken, "AddToCart");
+    }
+  });
+}
+
+function triggerProductDetailsPageViewReport() {}
+
+function triggerCompletePaymentReport() {
+  pixels.map((pixel) => {
+    if (pixel.trackCp == true && applicationStatus == true) {
+      window.ttq.instance(pixel.pixelId).track("CompletePayment", {
+        content_type: "product_group",
+        currency: Shopify.checkout.currency,
+        value: parseFloat(Shopify.checkout.total_price),
+        contents: lineItems,
+      });
+    }
+  });
+
+  // send events to fbc
+  pixelsfb.map((pixel) => {
+    if (pixel.trackAdc == true && applicationStatus == true) {
+      sendeventtofb(pixel.pixelId, pixel.acesstoken, "Purchase");
+    }
+  });
+}
+
+function PIX_detectAddToCartButton() {
+  var resultElement = null;
+  var adcButtonSelectors = [
+    '*[tpi-override="true"]:not([disabled])',
+    'button[name="ajax_add"]:not([disabled])',
+    'input[name="add"]:not([disabled])',
+    'button[name="add"]:not([disabled])',
+    'button[id="add"]:not([disabled])',
+    'input[id="add"]:not([disabled])',
+    'button[id="addToCart"]:not([disabled])',
+    'input[id="addToCart"]:not([disabled])',
+    'input[name="AddToCart"]:not([disabled])',
+    'button[name="AddToCart"]:not([disabled])',
+    "*[data-add-to-cart]:not([disabled])",
+    'input[id="AddToCart"]:not([disabled])',
+    'button[id="AddToCart"]:not([disabled])',
+    '*[id="add-to-cart"]:not([disabled])',
+    '*[id="adbtn"]:not([disabled])',
+    '*[class*="product-form--atc-button"]:not([disabled])',
+    '*[class*="product__add-to-cart"]:not([disabled])',
+    '*[id="shopify_add_to_cart"]:not([disabled])',
+    '*[class*="product-form--add-to-cart"]:not([disabled])',
+    '*[class*="ProductForm__AddToCart"]:not([disabled])',
+    '*[class*="add-to-cart"]:not([disabled])',
+    '*[class*="addtocart"]:not([disabled])',
+    '*[class*="AddToCart"]:not([disabled])',
+    '*[class*="addToCart"]:not([disabled])',
+    '*[data-action="add-to-cart"]:not([disabled])',
+    "*[data-add-to-cart-text]:not([disabled])",
+    '*[name="add"]:not([disabled])',
+    "*[data-add-button]:not([disabled])",
+    "*[data-buy-button]:not([disabled])",
+    '*[data-lhi="trans_buynow"]:not([disabled])',
+    '*[class*="add_to_cart_button"]:not([disabled])',
+    '*[data-pf-type="ProductATC"]:not([disabled])',
+    "*[data-add-cart]:not([disabled])",
+    '*[class*="product-buy-buttons--cta"]:not([disabled])',
+    '*[data-aid="product-form-submit-button"]:not([disabled])',
+    '*[class*="lh-add_to_cart"]:not([disabled])',
+    "*[data-text-add-to-cart]:not([disabled])",
+    '*[class*="single_add_to_cart_button"]:not([disabled])',
+    '*[data-text*="Add To Cart"]:not([disabled])',
+    "*[data-add-to-cart-text]",
+    '*[class*="btn-cart"]:not([disabled])',
+    '*[class*="ButtonBlock__Container"]:not([disabled])',
+  ];
+  var cartFormSelectors = [
+    'input[type="submit"]:not([disabled])',
+    'input[type="button"]:not([disabled])',
+  ];
+
+  for (var selector of adcButtonSelectors) {
+    var element = document.querySelector(selector);
+    if (element !== null) {
+      return element;
+    }
+  }
+
+  var cartFormElement = document.querySelector('form[action="/cart/add"]');
+  for (var selector of cartFormSelectors) {
+    if (cartFormElement !== null) {
+      var element = cartFormElement.querySelector(selector);
+    }
+    if (element !== null) {
+      return element;
+    }
+  }
+
+  return null;
+}
+
+function PIX_detectCheckoutButton() {
+  var resultElement = null;
+  var checkoutButtonSelectors = [
+    '[tpi-co-override="true"]',
+    '*[name="tpi-checkout"]:not([disabled])',
+    '*[class*="rebuy-cart__checkout-button"]:not([disabled])',
+    '*[class*="ymq-fake-checkout-btn"]:not([disabled])',
+    '*[name="checkout"]:not([disabled])',
+    '*[name="goto_pp"]:not([disabled])',
+    '*[name="goto_gc"]:not([disabled])',
+    '*[value*="Checkout"]',
+    '*[value*="Check out"]',
+    '*[href*="/checkout"]:not([href*="front_end/login"]):not([href*="/manage/subscription/"])',
+    '*[href*="/checkout"]',
+    '*[onclick*="/checkout"]',
+    '*[name="checkout-exemptify"]:not([disabled])',
+    '*[id="checkout"]:not([disabled])',
+    "*[data-cart-checkout-button]",
+    '*[class*="cart-button-checkout"]',
+    '*[class*="Cart__Checkout"]',
+    '*[class*="checkout__fbtn"]',
+    '*[name="ddcheckout"]:not([disabled])',
+    '*[class*="btnCheckout"]:not([disabled])',
+    '*[id="mu-checkout-button"]:not([disabled])',
+    "*[class*=satcb-cs-checkout-btn]",
+    '*[name="qbk-checkout"]',
+    '*[class*="evm_upsell_checkout"]',
+  ];
+  var cartFormSelectors = [
+    'input[type="submit"]:not([disabled])',
+    'input[type="button"]:not([disabled])',
+  ];
+
+  for (var selector of checkoutButtonSelectors) {
+    var elementSearchResult = document.querySelectorAll(selector);
+    if (
+      elementSearchResult.length > 1 &&
+      typeof window.TPI_THEME_NAME !== "undefined" &&
+      window.TPI_THEME_NAME.indexOf("dawn") === -1 &&
+      window.TPI_THEME_NAME.indexOf("moodring") === -1 &&
+      window.TPI_THEME_NAME.indexOf("empire") === -1 &&
+      window.TPI_THEME_NAME.indexOf("showtime") === -1 &&
+      selector !== '*[class*="ymq-fake-checkout-btn"]:not([disabled])'
+    ) {
+      if (elementSearchResult[1].getAttribute("tpi-ignore") === "true") {
+        continue;
+      }
+      if (elementSearchResult[1].hasOwnProperty("href")) {
+        if (
+          elementSearchResult[1]
+            .getAttribute("href")
+            .indexOf("/front_end/login") > -1
+        ) {
+          continue;
+        }
+      }
+
+      return elementSearchResult[1];
+    } else if (elementSearchResult.length > 0) {
+      if (elementSearchResult[0].getAttribute("tpi-ignore") === "true") {
+        continue;
+      }
+      if (elementSearchResult[0].hasOwnProperty("href")) {
+        if (
+          elementSearchResult[0]
+            .getAttribute("href")
+            .indexOf("/front_end/login") > -1
+        ) {
+          continue;
+        }
+      }
+
+      return elementSearchResult[0];
+    }
+  }
+
+  var cartFormElement = document.querySelector('form[action="/cart"]');
+  if (cartFormElement !== null) {
+    for (var selector of cartFormSelectors) {
+      var element = cartFormElement.querySelector(selector);
+      if (element !== null) {
+        return element;
+      }
+    }
+  }
+
+  return null;
+}
+
+function PIX_waitForCartDrawer() {
+  var checkoutButtonElement = PIX_detectCheckoutButton();
+  if (checkoutButtonElement === null) {
+    return;
+  }
+
+  if (checkoutButtonElement.getAttribute("tpi-pao-registered") === null) {
+    checkoutButtonElement.addEventListener(
+      "click",
+      triggerCheckoutInitiationReport
+    );
+    checkoutButtonElement.setAttribute("tpi-pao-registered", "true");
+  }
+}
+
+var pixelsfb;
+var applicationStatusfb;
+var url =
+  "https://multi-tiktok-pixels-ivhda.ondigitalocean.app/getPixelsFb?shop=" +
+  shop;
+
+fetch(url)
+  .then((response) => response.json())
+  .then((result) => {
+    pixelsfb = result.pixels;
+    applicationStatusfb = result.applicationStatus;
+    pixelsfb.map((pixel) => {
+      console.log("script id " + pixel.pixelId);
+
+      // facebook pixel page view
+      sendeventtofb(pixel.pixelId, pixel.acesstoken, "ViewContent");
+    });
+  });
+
+function sendeventtofb(pixel, token, eventname) {
+  // Define data parameters as variables
+  const accessToken = token;
+
+  // Get current timestamp in seconds (since `event_time` seems to expect it in seconds)
+  const currentTimestamp = Math.floor(Date.now() / 1000);
+  var pixfbc = getCookie("_fbc");
+  var pixfbp = getCookie("_fbp");
+  var pixpixelid = pixel;
+
+  var userAgent = navigator.userAgent;
+
+  fetch("https://api.ipify.org?format=json")
+    .then((response) => response.json())
+    .then((data) => {
+      const ip = data.ip;
+
+      var eventData;
+      if (eventname == "Purchase") {
+        eventData = [
+          {
+            event_name: eventname,
+            event_time: currentTimestamp,
+            action_source: "website",
+            user_data: {
+              fbc: pixfbc,
+              fbp: pixfbp,
+              client_ip_address: ip,
+              client_user_agent: userAgent,
+            },
+            custom_data: {
+              currency: Shopify.checkout.currency,
+              value: parseFloat(Shopify.checkout.total_price),
+              contents: lineItems,
+            },
+          },
+        ];
+      } else {
+        eventData = [
+          {
+            event_name: eventname,
+            event_time: currentTimestamp,
+            action_source: "website",
+            user_data: {
+              fbc: pixfbc,
+              fbp: pixfbp,
+              client_ip_address: ip,
+              client_user_agent: userAgent,
+            },
+          },
+        ];
+      }
+
+      console.log(eventData);
+
+      // Create FormData object and append data
+      const formdata = new FormData();
+      formdata.append("access_token", accessToken);
+      formdata.append("data", JSON.stringify(eventData));
+
+      // Request options
+      const requestOptions = {
+        method: "POST",
+        body: formdata,
+        redirect: "follow",
+      };
+
+      // Send the request
+      fetch(
+        "https://graph.facebook.com/v19.0/" + pixpixelid + "/events",
+        requestOptions
+      )
+        .then((response) => response.text())
+        .then((result) => console.log(result))
+        .catch((error) => console.error(error));
+    });
+}
+
+// Function to get cookie value by name
+function getCookie(cookieName) {
+  // Split the cookies into an array by semicolon
+  var cookies = document.cookie.split(";");
+
+  // Iterate through each cookie to find the one with the specified name
+  for (var i = 0; i < cookies.length; i++) {
+    var cookie = cookies[i].trim(); // Trim any leading/trailing spaces
+
+    // Check if the cookie starts with the name we're looking for
+    if (cookie.indexOf(cookieName + "=") === 0) {
+      // If found, return the value of the cookie
+      return cookie.substring(cookieName.length + 1, cookie.length);
+    }
+  }
+
+  // If cookie not found, return null
+  return null;
+}
+
+// make code work in all pages
+//}

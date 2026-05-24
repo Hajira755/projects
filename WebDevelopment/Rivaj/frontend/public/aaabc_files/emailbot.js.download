@@ -1,0 +1,25 @@
+const script = document.createElement("script");
+
+const subdomain = Shopify.shop;
+
+script.setAttribute(
+  "src",
+  `https://shopify-emailbot.s3.amazonaws.com/email-bot/email-bot-theme-file/index.js?subdomain=${subdomain}`
+);
+
+// script.setAttribute(
+//   "src",
+//   `https://all-dev-development.s3.amazonaws.com/email-bot/email-bot-theme-file/index.js?subdomain=${subdomain}`
+// );
+
+script.setAttribute("async", "");
+
+script.onload = function handleScriptLoaded() {
+  console.log("[emailbot has loaded installed..,]");
+};
+
+script.onerror = function handleScriptError() {
+  console.log("error loading script");
+};
+
+document.head.appendChild(script);

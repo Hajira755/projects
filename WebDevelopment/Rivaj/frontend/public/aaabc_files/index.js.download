@@ -1,0 +1,2139 @@
+(() => {
+  // node_modules/spin-wheel/src/util.js
+  function getRandomFloat(min = 0, max = 0, round = 14) {
+    return parseFloat((Math.random() * (max - min) + min).toFixed(round));
+  }
+  function degRad(degrees = 0) {
+    return degrees * Math.PI / 180;
+  }
+  function isAngleBetween(angle, arcStart, arcEnd) {
+    if (arcStart < arcEnd) return arcStart <= angle && angle < arcEnd;
+    return arcStart <= angle || angle < arcEnd;
+  }
+  function getFontSizeToFit(text, fontFamily, maxWidth, canvasContext) {
+    canvasContext.save();
+    canvasContext.font = `1px ${fontFamily}`;
+    const w = canvasContext.measureText(text).width;
+    canvasContext.restore();
+    return maxWidth / w;
+  }
+  function isPointInCircle(point = { x: 0, y: 0 }, cx, cy, radius) {
+    const distanceSquared = (point.x - cx) ** 2 + (point.y - cy) ** 2;
+    return distanceSquared <= radius ** 2;
+  }
+  function translateXYToElement(point = { x: 0, y: 0 }, element = {}, devicePixelRatio = 1) {
+    const rect = element.getBoundingClientRect();
+    return {
+      x: (point.x - rect.left) * devicePixelRatio,
+      y: (point.y - rect.top) * devicePixelRatio
+    };
+  }
+  function getAngle(originX, originY, targetX, targetY) {
+    const dx = originX - targetX;
+    const dy = originY - targetY;
+    let theta = Math.atan2(-dy, -dx);
+    theta *= 180 / Math.PI;
+    if (theta < 0) theta += 360;
+    return theta;
+  }
+  function addAngle(a = 0, b = 0) {
+    const sum = a + b;
+    let result;
+    if (sum > 0) {
+      result = sum % 360;
+    } else {
+      result = 360 + sum % 360;
+    }
+    if (result === 360) result = 0;
+    return result;
+  }
+  function diffAngle(a = 0, b = 0) {
+    const offsetFrom180 = 180 - b;
+    const aWithOffset = addAngle(a, offsetFrom180);
+    return 180 - aWithOffset;
+  }
+  function calcWheelRotationForTargetAngle(currentRotation = 0, targetAngle = 0, direction = 1) {
+    let angle = (currentRotation % 360 + targetAngle) % 360;
+    angle = fixFloat(angle);
+    angle = (direction === 1 ? 360 - angle : 360 + angle) % 360;
+    angle *= direction;
+    return currentRotation + angle;
+  }
+  function isObject(v) {
+    return typeof v === "object" && !Array.isArray(v) && v !== null;
+  }
+  function isNumber(n) {
+    return typeof n === "number" && !Number.isNaN(n);
+  }
+  function setProp({ val, isValid, errorMessage, defaultValue, action = null }) {
+    if (isValid) {
+      return action ? action() : val;
+    } else if (val === void 0) {
+      return defaultValue;
+    }
+    throw new Error(errorMessage);
+  }
+  function fixFloat(f = 0) {
+    return Number(f.toFixed(9));
+  }
+  function easeSinOut(n) {
+    return Math.sin(n * Math.PI / 2);
+  }
+  function getResizeObserver(element = {}, callBack = {}) {
+    if (window.ResizeObserver) {
+      const observer = new ResizeObserver(() => {
+        callBack({ redraw: true });
+      });
+      observer.observe(element);
+      return {
+        stop: () => {
+          observer.unobserve(element);
+          observer.disconnect();
+        }
+      };
+    }
+    window.addEventListener("resize", callBack);
+    return {
+      stop: () => {
+        window.removeEventListener("resize", callBack);
+      }
+    };
+  }
+
+  // node_modules/spin-wheel/src/constants.js
+  var arcAdjust = -90;
+  var baseCanvasSize = 500;
+  var dragCapturePeriod = 250;
+  var AlignText = Object.freeze({
+    left: "left",
+    right: "right",
+    center: "center"
+  });
+  var Defaults = Object.freeze({
+    wheel: {
+      borderColor: "#000",
+      borderWidth: 1,
+      debug: false,
+      image: null,
+      isInteractive: true,
+      itemBackgroundColors: ["#fff"],
+      itemLabelAlign: AlignText.right,
+      itemLabelBaselineOffset: 0,
+      itemLabelColors: ["#000"],
+      itemLabelFont: "sans-serif",
+      itemLabelFontSizeMax: baseCanvasSize,
+      itemLabelRadius: 0.85,
+      itemLabelRadiusMax: 0.2,
+      itemLabelRotation: 0,
+      itemLabelStrokeColor: "#fff",
+      itemLabelStrokeWidth: 0,
+      items: [],
+      lineColor: "#000",
+      lineWidth: 1,
+      pixelRatio: 0,
+      radius: 0.95,
+      rotation: 0,
+      rotationResistance: -35,
+      rotationSpeedMax: 300,
+      offset: { x: 0, y: 0 },
+      onCurrentIndexChange: null,
+      onRest: null,
+      onSpin: null,
+      overlayImage: null,
+      pointerAngle: 0
+    },
+    item: {
+      backgroundColor: null,
+      image: null,
+      imageOpacity: 1,
+      imageRadius: 0.5,
+      imageRotation: 0,
+      imageScale: 1,
+      label: "",
+      labelColor: null,
+      value: null,
+      weight: 1
+    }
+  });
+  var Debugging = Object.freeze({
+    pointerLineColor: "#ff00ff",
+    labelBoundingBoxColor: "#ff00ff",
+    labelRadiusColor: "#00ff00",
+    dragPointHue: 300
+  });
+
+  // node_modules/spin-wheel/src/events.js
+  function register(wheel = {}) {
+    registerPointerEvents(wheel);
+    wheel._handler_onResize = getResizeObserver(wheel._canvasContainer, ({ redraw = true }) => {
+      wheel.resize();
+      if (redraw) wheel.draw(performance.now());
+    });
+    const listenForDevicePixelRatioChange = () => {
+      wheel._mediaQueryList = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      wheel._mediaQueryList.addEventListener("change", wheel._handler_onDevicePixelRatioChange, { once: true });
+    };
+    wheel._handler_onDevicePixelRatioChange = () => {
+      wheel.resize();
+      listenForDevicePixelRatioChange();
+    };
+    listenForDevicePixelRatioChange();
+  }
+  function unregister(wheel = {}) {
+    const canvas = wheel.canvas;
+    if ("PointerEvent" in window) {
+      canvas.removeEventListener("pointerdown", wheel._handler_onPointerDown);
+      canvas.removeEventListener("pointermove", wheel._handler_onPointerMoveRefreshCursor);
+    } else {
+      canvas.removeEventListener("touchstart", wheel._handler_onTouchStart);
+      canvas.removeEventListener("mousedown", wheel._handler_onMouseDown);
+      canvas.removeEventListener("mousemove", wheel._handler_onMouseMoveRefreshCursor);
+    }
+    wheel._handler_onResize.stop();
+    wheel._mediaQueryList.removeEventListener("change", wheel._handler_onDevicePixelRatioChange);
+  }
+  function registerPointerEvents(wheel = {}) {
+    const canvas = wheel.canvas;
+    wheel._handler_onPointerMoveRefreshCursor = (e = {}) => {
+      const point = {
+        x: e.clientX,
+        y: e.clientY
+      };
+      wheel._isCursorOverWheel = wheel.wheelHitTest(point);
+      wheel.refreshCursor();
+    };
+    wheel._handler_onMouseMoveRefreshCursor = (e = {}) => {
+      const point = {
+        x: e.clientX,
+        y: e.clientY
+      };
+      wheel._isCursorOverWheel = wheel.wheelHitTest(point);
+      wheel.refreshCursor();
+    };
+    wheel._handler_onPointerDown = (e = {}) => {
+      const point = {
+        x: e.clientX,
+        y: e.clientY
+      };
+      if (!wheel.isInteractive) return;
+      if (!wheel.wheelHitTest(point)) return;
+      e.preventDefault();
+      wheel.dragStart(point);
+      canvas.setPointerCapture(e.pointerId);
+      canvas.addEventListener("pointermove", onPointerMove);
+      canvas.addEventListener("pointerup", onPointerUp);
+      canvas.addEventListener("pointercancel", onPointerUp);
+      canvas.addEventListener("pointerout", onPointerUp);
+      function onPointerMove(e2 = {}) {
+        e2.preventDefault();
+        wheel.dragMove({
+          x: e2.clientX,
+          y: e2.clientY
+        });
+      }
+      function onPointerUp(e2 = {}) {
+        e2.preventDefault();
+        canvas.releasePointerCapture(e2.pointerId);
+        canvas.removeEventListener("pointermove", onPointerMove);
+        canvas.removeEventListener("pointerup", onPointerUp);
+        canvas.removeEventListener("pointercancel", onPointerUp);
+        canvas.removeEventListener("pointerout", onPointerUp);
+        wheel.dragEnd();
+      }
+    };
+    wheel._handler_onMouseDown = (e = {}) => {
+      const point = {
+        x: e.clientX,
+        y: e.clientY
+      };
+      if (!wheel.isInteractive) return;
+      if (!wheel.wheelHitTest(point)) return;
+      wheel.dragStart(point);
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+      function onMouseMove(e2 = {}) {
+        e2.preventDefault();
+        wheel.dragMove({
+          x: e2.clientX,
+          y: e2.clientY
+        });
+      }
+      function onMouseUp(e2 = {}) {
+        e2.preventDefault();
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+        wheel.dragEnd();
+      }
+    };
+    wheel._handler_onTouchStart = (e = {}) => {
+      const point = {
+        x: e.targetTouches[0].clientX,
+        y: e.targetTouches[0].clientY
+      };
+      if (!wheel.isInteractive) return;
+      if (!wheel.wheelHitTest(point)) return;
+      e.preventDefault();
+      wheel.dragStart(point);
+      canvas.addEventListener("touchmove", onTouchMove);
+      canvas.addEventListener("touchend", onTouchEnd);
+      canvas.addEventListener("touchcancel", onTouchEnd);
+      function onTouchMove(e2 = {}) {
+        e2.preventDefault();
+        wheel.dragMove({
+          x: e2.targetTouches[0].clientX,
+          y: e2.targetTouches[0].clientY
+        });
+      }
+      function onTouchEnd(e2 = {}) {
+        e2.preventDefault();
+        canvas.removeEventListener("touchmove", onTouchMove);
+        canvas.removeEventListener("touchend", onTouchEnd);
+        canvas.removeEventListener("touchcancel", onTouchEnd);
+        wheel.dragEnd();
+      }
+    };
+    if ("PointerEvent" in window) {
+      canvas.addEventListener("pointerdown", wheel._handler_onPointerDown);
+      canvas.addEventListener("pointermove", wheel._handler_onPointerMoveRefreshCursor);
+    } else {
+      canvas.addEventListener("touchstart", wheel._handler_onTouchStart);
+      canvas.addEventListener("mousedown", wheel._handler_onMouseDown);
+      canvas.addEventListener("mousemove", wheel._handler_onMouseMoveRefreshCursor);
+    }
+  }
+
+  // node_modules/spin-wheel/src/item.js
+  var Item = class {
+    constructor(wheel, props = {}) {
+      if (!isObject(wheel)) throw new Error("wheel must be an instance of Wheel");
+      if (!isObject(props) && props !== null) throw new Error("props must be an Object or null");
+      this._wheel = wheel;
+      for (const i of Object.keys(Defaults.item)) {
+        this["_" + i] = Defaults.item[i];
+      }
+      if (props) {
+        this.init(props);
+      } else {
+        this.init(Defaults.item);
+      }
+    }
+    /**
+     * Initialise all properties.
+     */
+    init(props = {}) {
+      this.backgroundColor = props.backgroundColor;
+      this.image = props.image;
+      this.imageOpacity = props.imageOpacity;
+      this.imageRadius = props.imageRadius;
+      this.imageRotation = props.imageRotation;
+      this.imageScale = props.imageScale;
+      this.label = props.label;
+      this.labelColor = props.labelColor;
+      this.value = props.value;
+      this.weight = props.weight;
+    }
+    /**
+     * The [CSS color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) of the item's background.
+     * When `null`, the color will fall back to `Wheel.itemBackgroundColors`.
+     * Example: `'#fff'`.
+     */
+    get backgroundColor() {
+      return this._backgroundColor;
+    }
+    set backgroundColor(val) {
+      if (typeof val === "string") {
+        this._backgroundColor = val;
+      } else {
+        this._backgroundColor = Defaults.item.backgroundColor;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The image (HTMLImageElement) to draw on the item.
+     * Any part of the image that extends outside the item will be clipped.
+     * The image will be drawn over the top of `Item.backgroundColor`.
+     */
+    get image() {
+      return this._image;
+    }
+    set image(val) {
+      if (val instanceof HTMLImageElement) {
+        this._image = val;
+      } else {
+        this._image = Defaults.item.image;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The opacity (as a percent) of `Item.image`.
+     * Useful if you want to fade the image to make the item's label stand out.
+     */
+    get imageOpacity() {
+      return this._imageOpacity;
+    }
+    set imageOpacity(val) {
+      if (typeof val === "number") {
+        this._imageOpacity = val;
+      } else {
+        this._imageOpacity = Defaults.item.imageOpacity;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The point along the wheel's radius (as a percent, starting from the center) to draw the center of `Item.image`.
+     */
+    get imageRadius() {
+      return this._imageRadius;
+    }
+    set imageRadius(val) {
+      if (typeof val === "number") {
+        this._imageRadius = val;
+      } else {
+        this._imageRadius = Defaults.item.imageRadius;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The rotation (angle in degrees) of `Item.image`.
+     */
+    get imageRotation() {
+      return this._imageRotation;
+    }
+    set imageRotation(val) {
+      if (typeof val === "number") {
+        this._imageRotation = val;
+      } else {
+        this._imageRotation = Defaults.item.imageRotation;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The scale (size as a percent) of `Item.image`.
+     */
+    get imageScale() {
+      return this._imageScale;
+    }
+    set imageScale(val) {
+      if (typeof val === "number") {
+        this._imageScale = val;
+      } else {
+        this._imageScale = Defaults.item.imageScale;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The text that will be drawn on the item.
+     */
+    get label() {
+      return this._label;
+    }
+    set label(val) {
+      if (typeof val === "string") {
+        this._label = val;
+      } else {
+        this._label = Defaults.item.label;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * The [CSS color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) of the item's label.
+     * When `null`, the color will fall back to `Wheel.itemLabelColors`.
+     * Example: `'#000'`.
+     */
+    get labelColor() {
+      return this._labelColor;
+    }
+    set labelColor(val) {
+      if (typeof val === "string") {
+        this._labelColor = val;
+      } else {
+        this._labelColor = Defaults.item.labelColor;
+      }
+      this._wheel.refresh();
+    }
+    /**
+     * Some value that has meaning to your application.
+     * For example, a reference to the object representing the item on the wheel, or a database id.
+     */
+    get value() {
+      return this._value;
+    }
+    set value(val) {
+      if (val !== void 0) {
+        this._value = val;
+      } else {
+        this._value = Defaults.item.value;
+      }
+    }
+    /**
+     * The proportional size of the item relative to other items on the wheel.
+     * For example, if you have 2 items where `item[0]` has a weight of `1` and `item[1]` has a weight of `2`,
+     * then `item[0]` will take up 1/3 of the space on the wheel.
+     */
+    get weight() {
+      return this._weight;
+    }
+    set weight(val) {
+      if (typeof val === "number") {
+        this._weight = val;
+      } else {
+        this._weight = Defaults.item.weight;
+      }
+    }
+    /**
+     * Get the 0-based index of this item.
+     */
+    getIndex() {
+      const index = this._wheel.items.findIndex((i) => i === this);
+      if (index === -1) throw new Error("Item not found in parent Wheel");
+      return index;
+    }
+    /**
+     * Get the angle (in degrees) that this item ends at (exclusive), ignoring the current `rotation` of the wheel.
+     */
+    getCenterAngle() {
+      const angle = this._wheel.getItemAngles()[this.getIndex()];
+      return angle.start + (angle.end - angle.start) / 2;
+    }
+    /**
+     * Get the angle (in degrees) that this item starts at (inclusive), ignoring the current `rotation` of the wheel.
+     */
+    getStartAngle() {
+      return this._wheel.getItemAngles()[this.getIndex()].start;
+    }
+    /**
+     * Get the angle (in degrees) that this item ends at (inclusive), ignoring the current `rotation` of the wheel.
+     */
+    getEndAngle() {
+      return this._wheel.getItemAngles()[this.getIndex()].end;
+    }
+    /**
+     * Return a random angle (in degrees) between this item's start angle (inclusive) and end angle (inclusive).
+     */
+    getRandomAngle() {
+      return getRandomFloat(this.getStartAngle(), this.getEndAngle());
+    }
+  };
+
+  // node_modules/spin-wheel/src/wheel.js
+  var Wheel = class {
+    /**
+     * Create the wheel inside a container Element and initialise it with props.
+     * `container` must be an Element.
+     * `props` must be an Object or null.
+     */
+    constructor(container, props = {}) {
+      if (!(container instanceof Element)) throw new Error("container must be an instance of Element");
+      if (!isObject(props) && props !== null) throw new Error("props must be an Object or null");
+      this._frameRequestId = null;
+      this._rotationSpeed = 0;
+      this._rotationDirection = 1;
+      this._spinToTimeEnd = null;
+      this._lastSpinFrameTime = null;
+      this._isCursorOverWheel = false;
+      this.add(container);
+      for (const i of Object.keys(Defaults.wheel)) {
+        this["_" + i] = Defaults.wheel[i];
+      }
+      if (props) {
+        this.init(props);
+      } else {
+        this.init(Defaults.wheel);
+      }
+    }
+    /**
+     * Initialise all properties.
+     */
+    init(props = {}) {
+      this._isInitialising = true;
+      this.borderColor = props.borderColor;
+      this.borderWidth = props.borderWidth;
+      this.debug = props.debug;
+      this.image = props.image;
+      this.isInteractive = props.isInteractive;
+      this.itemBackgroundColors = props.itemBackgroundColors;
+      this.itemLabelAlign = props.itemLabelAlign;
+      this.itemLabelBaselineOffset = props.itemLabelBaselineOffset;
+      this.itemLabelColors = props.itemLabelColors;
+      this.itemLabelFont = props.itemLabelFont;
+      this.itemLabelFontSizeMax = props.itemLabelFontSizeMax;
+      this.itemLabelRadius = props.itemLabelRadius;
+      this.itemLabelRadiusMax = props.itemLabelRadiusMax;
+      this.itemLabelRotation = props.itemLabelRotation;
+      this.itemLabelStrokeColor = props.itemLabelStrokeColor;
+      this.itemLabelStrokeWidth = props.itemLabelStrokeWidth;
+      this.items = props.items;
+      this.lineColor = props.lineColor;
+      this.lineWidth = props.lineWidth;
+      this.pixelRatio = props.pixelRatio;
+      this.rotationSpeedMax = props.rotationSpeedMax;
+      this.radius = props.radius;
+      this.rotation = props.rotation;
+      this.rotationResistance = props.rotationResistance;
+      this.offset = props.offset;
+      this.onCurrentIndexChange = props.onCurrentIndexChange;
+      this.onRest = props.onRest;
+      this.onSpin = props.onSpin;
+      this.overlayImage = props.overlayImage;
+      this.pointerAngle = props.pointerAngle;
+    }
+    /**
+     * Add the wheel to the DOM and register event handlers.
+     */
+    add(container) {
+      this._canvasContainer = container;
+      this.canvas = document.createElement("canvas");
+      this.canvas.style.display = "block";
+      this._context = this.canvas.getContext("2d");
+      this._canvasContainer.append(this.canvas);
+      register(this);
+      if (this._isInitialising === false) this.resize();
+    }
+    /**
+     * Remove the wheel from the DOM and unregister event handlers.
+     */
+    remove() {
+      if (this.canvas === null) return;
+      if (this._frameRequestId !== null) window.cancelAnimationFrame(this._frameRequestId);
+      unregister(this);
+      this._canvasContainer.removeChild(this.canvas);
+      this._canvasContainer = null;
+      this.canvas = null;
+      this._context = null;
+    }
+    /**
+     * Resize the wheel to fit inside it's container.
+     * Call this after changing any property of the wheel that relates to it's size or position.
+     */
+    resize() {
+      if (this.canvas === null) return;
+      this.canvas.style.width = this._canvasContainer.clientWidth + "px";
+      this.canvas.style.height = this._canvasContainer.clientHeight + "px";
+      const [w, h] = [
+        this._canvasContainer.clientWidth * this.getActualPixelRatio(),
+        this._canvasContainer.clientHeight * this.getActualPixelRatio()
+      ];
+      this.canvas.width = w;
+      this.canvas.height = h;
+      const min = Math.min(w, h);
+      const wheelSize = {
+        w: min - min * this._offset.x,
+        h: min - min * this._offset.y
+      };
+      const scale = Math.min(w / wheelSize.w, h / wheelSize.h);
+      this._size = Math.max(wheelSize.w * scale, wheelSize.h * scale);
+      this._center = {
+        x: w / 2 + w * this._offset.x,
+        y: h / 2 + h * this._offset.y
+      };
+      this._actualRadius = this._size / 2 * this.radius;
+      this._itemLabelFontSize = this.itemLabelFontSizeMax * (this._size / baseCanvasSize);
+      this._labelMaxWidth = this._actualRadius * (this.itemLabelRadius - this.itemLabelRadiusMax);
+      if (this.itemLabelAlign === "center") {
+        this._labelMaxWidth *= 2;
+      }
+      for (const item of this._items) {
+        this._itemLabelFontSize = Math.min(this._itemLabelFontSize, getFontSizeToFit(item.label, this.itemLabelFont, this._labelMaxWidth, this._context));
+      }
+      this.refresh();
+    }
+    /**
+     * Main animation loop.
+     */
+    draw(now = 0) {
+      this._frameRequestId = null;
+      if (this._context === null || this.canvas === null) return;
+      const ctx = this._context;
+      ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.animateRotation(now);
+      const angles = this.getItemAngles(this._rotation);
+      const actualBorderWidth = this.getScaledNumber(this._borderWidth);
+      ctx.textBaseline = "middle";
+      ctx.textAlign = this.itemLabelAlign;
+      ctx.font = this._itemLabelFontSize + "px " + this.itemLabelFont;
+      for (const [i, a] of angles.entries()) {
+        const item = this._items[i];
+        const path = new Path2D();
+        path.moveTo(this._center.x, this._center.y);
+        path.arc(
+          this._center.x,
+          this._center.y,
+          this._actualRadius - actualBorderWidth / 2,
+          degRad(a.start + arcAdjust),
+          degRad(a.end + arcAdjust)
+        );
+        item.path = path;
+      }
+      this.drawItemBackgrounds(ctx, angles);
+      this.drawItemImages(ctx, angles);
+      this.drawItemLines(ctx, angles);
+      this.drawItemLabels(ctx, angles);
+      this.drawBorder(ctx);
+      this.drawImage(ctx, this._image, false);
+      this.drawImage(ctx, this._overlayImage, true);
+      this.drawDebugPointerLine(ctx);
+      this._isInitialising = false;
+    }
+    drawItemBackgrounds(ctx, angles = []) {
+      for (const [i, a] of angles.entries()) {
+        const item = this._items[i];
+        ctx.fillStyle = item.backgroundColor ?? // Fall back to a value from the repeating set:
+        this._itemBackgroundColors[i % this._itemBackgroundColors.length];
+        ctx.fill(item.path);
+      }
+    }
+    drawItemImages(ctx, angles = []) {
+      for (const [i, a] of angles.entries()) {
+        const item = this._items[i];
+        if (item.image === null) continue;
+        ctx.save();
+        ctx.clip(item.path);
+        const angle = a.start + (a.end - a.start) / 2;
+        ctx.translate(
+          this._center.x + Math.cos(degRad(angle + arcAdjust)) * (this._actualRadius * item.imageRadius),
+          this._center.y + Math.sin(degRad(angle + arcAdjust)) * (this._actualRadius * item.imageRadius)
+        );
+        ctx.rotate(degRad(angle + item.imageRotation));
+        ctx.globalAlpha = item.imageOpacity;
+        const width = this._size / 500 * item.image.width * item.imageScale;
+        const height = this._size / 500 * item.image.height * item.imageScale;
+        const widthHalf = -width / 2;
+        const heightHalf = -height / 2;
+        ctx.drawImage(
+          item.image,
+          widthHalf,
+          heightHalf,
+          width,
+          height
+        );
+        ctx.restore();
+      }
+    }
+    drawImage(ctx, image, isOverlay = false) {
+      if (image === null) return;
+      ctx.translate(
+        this._center.x,
+        this._center.y
+      );
+      if (!isOverlay) ctx.rotate(degRad(this._rotation));
+      const size = isOverlay ? this._size : this._size * this.radius;
+      const sizeHalf = -(size / 2);
+      ctx.drawImage(
+        image,
+        sizeHalf,
+        sizeHalf,
+        size,
+        size
+      );
+      ctx.resetTransform();
+    }
+    drawDebugPointerLine(ctx) {
+      if (!this.debug) return;
+      ctx.translate(
+        this._center.x,
+        this._center.y
+      );
+      ctx.rotate(degRad(this._pointerAngle + arcAdjust));
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(this._actualRadius * 2, 0);
+      ctx.strokeStyle = Debugging.pointerLineColor;
+      ctx.lineWidth = this.getScaledNumber(2);
+      ctx.stroke();
+      ctx.resetTransform();
+    }
+    drawBorder(ctx) {
+      if (this._borderWidth <= 0) return;
+      const actualBorderWidth = this.getScaledNumber(this._borderWidth);
+      const actualBorderColor = this._borderColor || "transparent";
+      ctx.beginPath();
+      ctx.strokeStyle = actualBorderColor;
+      ctx.lineWidth = actualBorderWidth;
+      ctx.arc(this._center.x, this._center.y, this._actualRadius - actualBorderWidth / 2, 0, 2 * Math.PI);
+      ctx.stroke();
+      if (this.debug) {
+        const actualDebugLineWidth = this.getScaledNumber(1);
+        ctx.beginPath();
+        ctx.strokeStyle = ctx.strokeStyle = Debugging.labelRadiusColor;
+        ctx.lineWidth = actualDebugLineWidth;
+        ctx.arc(this._center.x, this._center.y, this._actualRadius * this.itemLabelRadius, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.strokeStyle = ctx.strokeStyle = Debugging.labelRadiusColor;
+        ctx.lineWidth = actualDebugLineWidth;
+        ctx.arc(this._center.x, this._center.y, this._actualRadius * this.itemLabelRadiusMax, 0, 2 * Math.PI);
+        ctx.stroke();
+      }
+    }
+    drawItemLines(ctx, angles = []) {
+      if (this._lineWidth <= 0) return;
+      const actualLineWidth = this.getScaledNumber(this._lineWidth);
+      const actualBorderWidth = this.getScaledNumber(this._borderWidth);
+      ctx.translate(
+        this._center.x,
+        this._center.y
+      );
+      for (const angle of angles) {
+        ctx.rotate(degRad(angle.start + arcAdjust));
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(this._actualRadius - actualBorderWidth, 0);
+        ctx.strokeStyle = this.lineColor;
+        ctx.lineWidth = actualLineWidth;
+        ctx.stroke();
+        ctx.rotate(-degRad(angle.start + arcAdjust));
+      }
+      ctx.resetTransform();
+    }
+    drawItemLabels(ctx, angles = []) {
+      const actualItemLabelBaselineOffset = this._itemLabelFontSize * -this.itemLabelBaselineOffset;
+      const actualDebugLineWidth = this.getScaledNumber(1);
+      const actualLabelStrokeWidth = this.getScaledNumber(this._itemLabelStrokeWidth * 2);
+      for (const [i, a] of angles.entries()) {
+        const item = this._items[i];
+        const actualLabelColor = item.labelColor || (this._itemLabelColors[i % this._itemLabelColors.length] || "transparent");
+        if (item.label.trim() === "" || actualLabelColor === "transparent") continue;
+        ctx.save();
+        ctx.clip(item.path);
+        const angle = a.start + (a.end - a.start) / 2;
+        ctx.translate(
+          this._center.x + Math.cos(degRad(angle + arcAdjust)) * (this._actualRadius * this.itemLabelRadius),
+          this._center.y + Math.sin(degRad(angle + arcAdjust)) * (this._actualRadius * this.itemLabelRadius)
+        );
+        ctx.rotate(degRad(angle + arcAdjust));
+        ctx.rotate(degRad(this.itemLabelRotation));
+        if (this.debug) {
+          ctx.save();
+          let alignAdjust = 0;
+          if (this.itemLabelAlign === "left") {
+            alignAdjust = this._labelMaxWidth;
+          } else if (this.itemLabelAlign === "center") {
+            alignAdjust = this._labelMaxWidth / 2;
+          }
+          ctx.beginPath();
+          ctx.moveTo(alignAdjust, 0);
+          ctx.lineTo(-this._labelMaxWidth + alignAdjust, 0);
+          ctx.strokeStyle = Debugging.labelBoundingBoxColor;
+          ctx.lineWidth = actualDebugLineWidth;
+          ctx.stroke();
+          ctx.strokeRect(alignAdjust, -this._itemLabelFontSize / 2, -this._labelMaxWidth, this._itemLabelFontSize);
+          ctx.restore();
+        }
+        if (this._itemLabelStrokeWidth > 0) {
+          ctx.lineWidth = actualLabelStrokeWidth;
+          ctx.strokeStyle = this._itemLabelStrokeColor;
+          ctx.lineJoin = "round";
+          ctx.strokeText(item.label, 0, actualItemLabelBaselineOffset);
+        }
+        ctx.fillStyle = actualLabelColor;
+        ctx.fillText(item.label, 0, actualItemLabelBaselineOffset);
+        if (this.debug) {
+          const circleDiameter = this.getScaledNumber(2);
+          ctx.beginPath();
+          ctx.arc(0, 0, circleDiameter, 0, 2 * Math.PI);
+          ctx.fillStyle = Debugging.labelRadiusColor;
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+    drawDebugDragPoints(ctx) {
+      if (!this.debug || !this._dragEvents?.length) return;
+      const dragEventsReversed = [...this._dragEvents].reverse();
+      const lineWidth = this.getScaledNumber(0.5);
+      const circleDiameter = this.getScaledNumber(4);
+      for (const [i, event] of dragEventsReversed.entries()) {
+        const lightnessPercent = i / this._dragEvents.length * 100;
+        ctx.beginPath();
+        ctx.arc(event.x, event.y, circleDiameter, 0, 2 * Math.PI);
+        ctx.fillStyle = `hsl(${Debugging.dragPointHue},100%,${lightnessPercent}%)`;
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = lineWidth;
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    animateRotation(now = 0) {
+      if (this._spinToTimeEnd !== null) {
+        if (now >= this._spinToTimeEnd) {
+          this.rotation = this._spinToEndRotation;
+          this._spinToTimeEnd = null;
+          this.raiseEvent_onRest();
+          return;
+        }
+        const duration = this._spinToTimeEnd - this._spinToTimeStart;
+        let delta = (now - this._spinToTimeStart) / duration;
+        delta = delta < 0 ? 0 : delta;
+        const distance = this._spinToEndRotation - this._spinToStartRotation;
+        this.rotation = this._spinToStartRotation + distance * this._spinToEasingFunction(delta);
+        this.refresh();
+        return;
+      }
+      if (this._lastSpinFrameTime !== null) {
+        const delta = now - this._lastSpinFrameTime;
+        if (delta > 0) {
+          this.rotation += delta / 1e3 * this._rotationSpeed % 360;
+          this._rotationSpeed = this.getRotationSpeedPlusDrag(delta);
+          if (this._rotationSpeed === 0) {
+            this.raiseEvent_onRest();
+            this._lastSpinFrameTime = null;
+          } else {
+            this._lastSpinFrameTime = now;
+          }
+        }
+        this.refresh();
+        return;
+      }
+    }
+    getRotationSpeedPlusDrag(delta = 0) {
+      const newRotationSpeed = this._rotationSpeed + this.rotationResistance * (delta / 1e3) * this._rotationDirection;
+      if (this._rotationDirection === 1 && newRotationSpeed < 0 || this._rotationDirection === -1 && newRotationSpeed >= 0) {
+        return 0;
+      }
+      return newRotationSpeed;
+    }
+    /**
+     * Spin the wheel by setting `rotationSpeed`.
+     * The wheel will immediately start spinning, and slow down over time depending on the value of `rotationResistance`.
+     * A positive number will spin clockwise, a negative number will spin anti-clockwise.
+     */
+    spin(rotationSpeed = 0) {
+      if (!isNumber(rotationSpeed)) throw new Error("rotationSpeed must be a number");
+      this._dragEvents = [];
+      this.beginSpin(rotationSpeed, "spin");
+    }
+    /**
+     * Spin the wheel to a particular rotation.
+     * The animation will occur over the provided `duration` (milliseconds).
+     * The animation can be adjusted by providing an optional `easingFunction` which accepts a single parameter n, where n is between 0 and 1 inclusive.
+     * If no easing function is provided, the default easeSinOut will be used.
+     * For example easing functions see [easing-utils](https://github.com/AndrewRayCode/easing-utils).
+     */
+    spinTo(rotation = 0, duration = 0, easingFunction = null) {
+      if (!isNumber(rotation)) throw new Error("Error: rotation must be a number");
+      if (!isNumber(duration)) throw new Error("Error: duration must be a number");
+      this.stop();
+      this._dragEvents = [];
+      this.animate(rotation, duration, easingFunction);
+      this.raiseEvent_onSpin({ method: "spinto", targetRotation: rotation, duration });
+    }
+    /**
+     * Spin the wheel to a particular item.
+     * The animation will occur over the provided `duration` (milliseconds).
+     * If `spinToCenter` is true, the wheel will spin to the center of the item, otherwise the wheel will spin to a random angle inside the item.
+     * `numberOfRevolutions` controls how many times the wheel will rotate a full 360 degrees before resting on the item.
+     * `direction` can be `1` (clockwise) or `-1` (anti-clockwise).
+     * The animation can be adjusted by providing an optional `easingFunction` which accepts a single parameter n, where n is between 0 and 1 inclusive.
+     * If no easing function is provided, the default easeSinOut will be used.
+     * For example easing functions see [easing-utils](https://github.com/AndrewRayCode/easing-utils).
+     */
+    spinToItem(itemIndex = 0, duration = 0, spinToCenter = true, numberOfRevolutions = 1, direction = 1, easingFunction = null) {
+      this.stop();
+      this._dragEvents = [];
+      const itemAngle = spinToCenter ? this.items[itemIndex].getCenterAngle() : this.items[itemIndex].getRandomAngle();
+      let newRotation = calcWheelRotationForTargetAngle(this.rotation, itemAngle - this._pointerAngle, direction);
+      newRotation += numberOfRevolutions * 360 * direction;
+      this.animate(newRotation, duration, easingFunction);
+      this.raiseEvent_onSpin({ method: "spintoitem", targetItemIndex: itemIndex, targetRotation: newRotation, duration });
+    }
+    animate(newRotation, duration, easingFunction) {
+      this._spinToStartRotation = this.rotation;
+      this._spinToEndRotation = newRotation;
+      this._spinToTimeStart = performance.now();
+      this._spinToTimeEnd = this._spinToTimeStart + duration;
+      this._spinToEasingFunction = easingFunction || easeSinOut;
+      this.refresh();
+    }
+    /**
+     * Immediately stop the wheel from spinning, regardless of which method was used to spin it.
+     */
+    stop() {
+      this._spinToTimeEnd = null;
+      this._rotationSpeed = 0;
+      this._lastSpinFrameTime = null;
+    }
+    /**
+     * Return n scaled to the size of the canvas.
+     */
+    getScaledNumber(n) {
+      return n / baseCanvasSize * this._size;
+    }
+    getActualPixelRatio() {
+      return this._pixelRatio !== 0 ? this._pixelRatio : window.devicePixelRatio;
+    }
+    /**
+     * Return true if the given point is inside the wheel.
+     */
+    wheelHitTest(point = { x: 0, y: 0 }) {
+      if (this.canvas === null) return false;
+      const p = translateXYToElement(point, this.canvas, this.getActualPixelRatio());
+      return isPointInCircle(p, this._center.x, this._center.y, this._actualRadius);
+    }
+    /**
+     * Refresh the cursor state.
+     * Call this after the pointer moves.
+     */
+    refreshCursor() {
+      if (this.canvas === null) return;
+      if (this.isInteractive) {
+        if (this.isDragging) {
+          this.canvas.style.cursor = "grabbing";
+          return;
+        }
+        if (this._isCursorOverWheel) {
+          this.canvas.style.cursor = "grab";
+          return;
+        }
+      }
+      this.canvas.style.cursor = "";
+    }
+    /**
+     * Get the angle (in degrees) of the given point from the center of the wheel.
+     * 0 is north.
+     */
+    getAngleFromCenter(point = { x: 0, y: 0 }) {
+      return (getAngle(this._center.x, this._center.y, point.x, point.y) + 90) % 360;
+    }
+    /**
+     * Get the index of the item that the Pointer is pointing at.
+     * An item is considered "current" if `pointerAngle` is between it's start angle (inclusive)
+     * and it's end angle (exclusive).
+     */
+    getCurrentIndex() {
+      return this._currentIndex;
+    }
+    /**
+     * Calculate and set `currentIndex`
+     */
+    refreshCurrentIndex(angles = []) {
+      if (this._items.length === 0) this._currentIndex = -1;
+      for (const [i, a] of angles.entries()) {
+        if (!isAngleBetween(this._pointerAngle, a.start % 360, a.end % 360)) continue;
+        if (this._currentIndex === i) break;
+        this._currentIndex = i;
+        if (!this._isInitialising) this.raiseEvent_onCurrentIndexChange();
+        break;
+      }
+    }
+    /**
+     * Return an array of objects containing the start angle (inclusive) and end angle (inclusive) of each item.
+     */
+    getItemAngles(initialRotation = 0) {
+      let weightSum = 0;
+      for (const i of this.items) {
+        weightSum += i.weight;
+      }
+      const weightedItemAngle = 360 / weightSum;
+      let itemAngle;
+      let lastItemAngle = initialRotation;
+      const angles = [];
+      for (const item of this._items) {
+        itemAngle = item.weight * weightedItemAngle;
+        angles.push({
+          start: lastItemAngle,
+          end: lastItemAngle + itemAngle
+        });
+        lastItemAngle += itemAngle;
+      }
+      if (this._items.length > 1) {
+        angles[angles.length - 1].end = angles[0].start + 360;
+      }
+      return angles;
+    }
+    /**
+     * Schedule a redraw of the wheel on the canvas.
+     * Call this after changing any property of the wheel that relates to it's appearance.
+     */
+    refresh() {
+      if (this._frameRequestId === null) {
+        this._frameRequestId = window.requestAnimationFrame((t) => this.draw(t));
+      }
+    }
+    limitSpeed(speed = 0, max = 0) {
+      const newSpeed = Math.min(speed, max);
+      return Math.max(newSpeed, -max);
+    }
+    beginSpin(speed = 0, spinMethod = "") {
+      this.stop();
+      this._rotationSpeed = this.limitSpeed(speed, this._rotationSpeedMax);
+      this._lastSpinFrameTime = performance.now();
+      this._rotationDirection = this._rotationSpeed >= 0 ? 1 : -1;
+      if (this._rotationSpeed !== 0) {
+        this.raiseEvent_onSpin({
+          method: spinMethod,
+          rotationSpeed: this._rotationSpeed,
+          rotationResistance: this._rotationResistance
+        });
+      }
+      this.refresh();
+    }
+    refreshAriaLabel() {
+      if (this.canvas === null) return;
+      this.canvas.setAttribute("role", "img");
+      const wheelDescription = this.items.length >= 2 ? ` The wheel has ${this.items.length} slices.` : "";
+      this.canvas.setAttribute("aria-label", "An image of a spinning prize wheel." + wheelDescription);
+    }
+    /**
+     * The [CSS color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) for the line around the circumference of the wheel.
+     */
+    get borderColor() {
+      return this._borderColor;
+    }
+    set borderColor(val) {
+      this._borderColor = setProp({
+        val,
+        isValid: typeof val === "string",
+        errorMessage: "Wheel.borderColor must be a string",
+        defaultValue: Defaults.wheel.borderColor
+      });
+      this.refresh();
+    }
+    /**
+     * The width (in pixels) of the line around the circumference of the wheel.
+     */
+    get borderWidth() {
+      return this._borderWidth;
+    }
+    set borderWidth(val) {
+      this._borderWidth = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.borderWidth must be a number",
+        defaultValue: Defaults.wheel.borderWidth
+      });
+      this.refresh();
+    }
+    /**
+     * If debugging info will be shown.
+     * This is helpful when positioning labels.
+     */
+    get debug() {
+      return this._debug;
+    }
+    set debug(val) {
+      this._debug = setProp({
+        val,
+        isValid: typeof val === "boolean",
+        errorMessage: "Wheel.debug must be a boolean",
+        defaultValue: Defaults.wheel.debug
+      });
+      this.refresh();
+    }
+    /**
+     * The image (HTMLImageElement) to draw on the wheel and rotate with the wheel.
+     * It will be centered and scaled to fit `Wheel.radius`.
+     */
+    get image() {
+      return this._image;
+    }
+    set image(val) {
+      this._image = setProp({
+        val,
+        isValid: val instanceof HTMLImageElement || val === null,
+        errorMessage: "Wheel.image must be a HTMLImageElement or null",
+        defaultValue: Defaults.wheel.image
+      });
+      this.refresh();
+    }
+    /**
+     * If the user will be allowed to spin the wheel using click-drag/touch-flick.
+     * User interaction will only be detected within the bounds of `Wheel.radius`.
+     */
+    get isInteractive() {
+      return this._isInteractive;
+    }
+    set isInteractive(val) {
+      this._isInteractive = setProp({
+        val,
+        isValid: typeof val === "boolean",
+        errorMessage: "Wheel.isInteractive must be a boolean",
+        defaultValue: Defaults.wheel.isInteractive
+      });
+      this.refreshCursor();
+    }
+    /**
+     * The [CSS colors](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) to use as a repeating pattern for the background colors of all items.
+     * Overridden by `Item.backgroundColor`.
+     * Example: `['#fff','#000']`.
+     */
+    get itemBackgroundColors() {
+      return this._itemBackgroundColors;
+    }
+    set itemBackgroundColors(val) {
+      this._itemBackgroundColors = setProp({
+        val,
+        isValid: Array.isArray(val),
+        errorMessage: "Wheel.itemBackgroundColors must be an array",
+        defaultValue: Defaults.wheel.itemBackgroundColors
+      });
+      this.refresh();
+    }
+    /**
+     * The alignment of all item labels.
+     * Possible values: `'left'`,`'center'`,`'right'`.
+     */
+    get itemLabelAlign() {
+      return this._itemLabelAlign;
+    }
+    set itemLabelAlign(val) {
+      this._itemLabelAlign = setProp({
+        val,
+        isValid: typeof val === "string" && (val === AlignText.left || val === AlignText.right || val === AlignText.center),
+        errorMessage: "Wheel.itemLabelAlign must be one of Constants.AlignText",
+        defaultValue: Defaults.wheel.itemLabelAlign
+      });
+      this.resize();
+    }
+    /**
+     * The offset of the baseline (or line height) of all item labels (as a percent of the label's height).
+     */
+    get itemLabelBaselineOffset() {
+      return this._itemLabelBaselineOffset;
+    }
+    set itemLabelBaselineOffset(val) {
+      this._itemLabelBaselineOffset = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelBaselineOffset must be a number",
+        defaultValue: Defaults.wheel.itemLabelBaselineOffset
+      });
+      this.resize();
+    }
+    /**
+     * The [CSS colors](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) to use as a repeating pattern for the colors of all item labels.
+     * Overridden by `Item.labelColor`.
+     * Example: `['#fff','#000']`.
+     */
+    get itemLabelColors() {
+      return this._itemLabelColors;
+    }
+    set itemLabelColors(val) {
+      this._itemLabelColors = setProp({
+        val,
+        isValid: Array.isArray(val),
+        errorMessage: "Wheel.itemLabelColors must be an array",
+        defaultValue: Defaults.wheel.itemLabelColors
+      });
+      this.refresh();
+    }
+    /**
+     * The [font familiy](https://developer.mozilla.org/en-US/docs/Web/CSS/font-family) to use for all item labels.
+     * Example: `'Helvetica, sans-serif'`.
+     */
+    get itemLabelFont() {
+      return this._itemLabelFont;
+    }
+    set itemLabelFont(val) {
+      this._itemLabelFont = setProp({
+        val,
+        isValid: typeof val === "string",
+        errorMessage: "Wheel.itemLabelFont must be a string",
+        defaultValue: Defaults.wheel.itemLabelFont
+      });
+      this.resize();
+    }
+    /**
+     * The maximum font size (in pixels) for all item labels.
+     */
+    get itemLabelFontSizeMax() {
+      return this._itemLabelFontSizeMax;
+    }
+    set itemLabelFontSizeMax(val) {
+      this._itemLabelFontSizeMax = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelFontSizeMax must be a number",
+        defaultValue: Defaults.wheel.itemLabelFontSizeMax
+      });
+      this.resize();
+    }
+    /**
+     * The point along the wheel's radius (as a percent, starting from the center)
+     * to start drawing all item labels.
+     */
+    get itemLabelRadius() {
+      return this._itemLabelRadius;
+    }
+    set itemLabelRadius(val) {
+      this._itemLabelRadius = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelRadius must be a number",
+        defaultValue: Defaults.wheel.itemLabelRadius
+      });
+      this.resize();
+    }
+    /**
+     * The point along the wheel's radius (as a percent, starting from the center)
+     * to limit the maximum width of all item labels.
+     */
+    get itemLabelRadiusMax() {
+      return this._itemLabelRadiusMax;
+    }
+    set itemLabelRadiusMax(val) {
+      this._itemLabelRadiusMax = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelRadiusMax must be a number",
+        defaultValue: Defaults.wheel.itemLabelRadiusMax
+      });
+      this.resize();
+    }
+    /**
+     * The rotation of all item labels.
+     * Use this in combination with `itemLabelAlign` to flip the labels `180°`.
+     */
+    get itemLabelRotation() {
+      return this._itemLabelRotation;
+    }
+    set itemLabelRotation(val) {
+      this._itemLabelRotation = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelRotation must be a number",
+        defaultValue: Defaults.wheel.itemLabelRotation
+      });
+      this.refresh();
+    }
+    /**
+     * The [CSS color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) of the stroke applied to the outside of the label text.
+     */
+    get itemLabelStrokeColor() {
+      return this._itemLabelStrokeColor;
+    }
+    set itemLabelStrokeColor(val) {
+      this._itemLabelStrokeColor = setProp({
+        val,
+        isValid: typeof val === "string",
+        errorMessage: "Wheel.itemLabelStrokeColor must be a string",
+        defaultValue: Defaults.wheel.itemLabelStrokeColor
+      });
+      this.refresh();
+    }
+    /**
+     * The width of the stroke applied to the outside of the label text.
+     */
+    get itemLabelStrokeWidth() {
+      return this._itemLabelStrokeWidth;
+    }
+    set itemLabelStrokeWidth(val) {
+      this._itemLabelStrokeWidth = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.itemLabelStrokeWidth must be a number",
+        defaultValue: Defaults.wheel.itemLabelStrokeWidth
+      });
+      this.refresh();
+    }
+    /**
+     * The items (or slices, wedges, segments) shown on the wheel.
+     * Setting this property will re-create all of the items on the wheel based on the objects provided.
+     * Accessing this property lets you change individual items. For example you could change the background color of an item.
+     */
+    get items() {
+      return this._items;
+    }
+    set items(val) {
+      this._items = setProp({
+        val,
+        isValid: Array.isArray(val),
+        errorMessage: "Wheel.items must be an array of Items",
+        defaultValue: Defaults.wheel.items,
+        action: () => {
+          const v = [];
+          for (const item of val) {
+            v.push(new Item(this, item));
+          }
+          return v;
+        }
+      });
+      this.refreshAriaLabel();
+      this.refreshCurrentIndex(this.getItemAngles(this._rotation));
+      this.resize();
+    }
+    /**
+     * The [CSS color](https://developer.mozilla.org/en-US/docs/Web/CSS/color_value) of the lines between the items.
+     */
+    get lineColor() {
+      return this._lineColor;
+    }
+    set lineColor(val) {
+      this._lineColor = setProp({
+        val,
+        isValid: typeof val === "string",
+        errorMessage: "Wheel.lineColor must be a string",
+        defaultValue: Defaults.wheel.lineColor
+      });
+      this.refresh();
+    }
+    /**
+     * The width (in pixels) of the lines between the items.
+     */
+    get lineWidth() {
+      return this._lineWidth;
+    }
+    set lineWidth(val) {
+      this._lineWidth = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.lineWidth must be a number",
+        defaultValue: Defaults.wheel.lineWidth
+      });
+      this.refresh();
+    }
+    /**
+     * The offset of the wheel from the center of it's container (as a percent of the wheel's diameter).
+     */
+    get offset() {
+      return this._offset;
+    }
+    set offset(val) {
+      this._offset = setProp({
+        val,
+        isValid: isObject(val),
+        errorMessage: "Wheel.offset must be an object",
+        defaultValue: Defaults.wheel.offset
+      });
+      this.resize();
+    }
+    /**
+     * The callback for the `onCurrentIndexChange` event.
+     */
+    get onCurrentIndexChange() {
+      return this._onCurrentIndexChange;
+    }
+    set onCurrentIndexChange(val) {
+      this._onCurrentIndexChange = setProp({
+        val,
+        isValid: typeof val === "function" || val === null,
+        errorMessage: "Wheel.onCurrentIndexChange must be a function or null",
+        defaultValue: Defaults.wheel.onCurrentIndexChange
+      });
+    }
+    /**
+     * The callback for the `onRest` event.
+     */
+    get onRest() {
+      return this._onRest;
+    }
+    set onRest(val) {
+      this._onRest = setProp({
+        val,
+        isValid: typeof val === "function" || val === null,
+        errorMessage: "Wheel.onRest must be a function or null",
+        defaultValue: Defaults.wheel.onRest
+      });
+    }
+    /**
+     * The callback for the `onSpin` event.
+     */
+    get onSpin() {
+      return this._onSpin;
+    }
+    set onSpin(val) {
+      this._onSpin = setProp({
+        val,
+        isValid: typeof val === "function" || val === null,
+        errorMessage: "Wheel.onSpin must be a function or null",
+        defaultValue: Defaults.wheel.onSpin
+      });
+    }
+    /**
+     * The image (HTMLImageElement) to draw over the top of the wheel.
+     * It will be centered and scaled to fit the container's smallest dimension.
+     * Use this to draw decorations around the wheel, such as a stand or pointer.
+     */
+    get overlayImage() {
+      return this._overlayImage;
+    }
+    set overlayImage(val) {
+      this._overlayImage = setProp({
+        val,
+        isValid: val instanceof HTMLImageElement || val === null,
+        errorMessage: "Wheel.overlayImage must be a HTMLImageElement or null",
+        defaultValue: Defaults.wheel.overlayImage
+      });
+      this.refresh();
+    }
+    /**
+     * The pixel ratio (as a percent) used to draw the wheel.
+     * Higher values will produce a sharper image at the cost of performance, but the sharpness depends on the current display device.
+     * A value of `0` will use the pixel ratio of the current display device (see [devicePixelRatio](https://developer.mozilla.org/en-US/docs/Web/API/Window/devicePixelRatio)).
+     */
+    get pixelRatio() {
+      return this._pixelRatio;
+    }
+    set pixelRatio(val) {
+      this._pixelRatio = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.pixelRatio must be a number",
+        defaultValue: Defaults.wheel.pixelRatio
+      });
+      this._dragEvents = [];
+      this.resize();
+    }
+    /**
+     * The angle of the Pointer which will be used to determine the `currentIndex` (or the "winning" item).
+     */
+    get pointerAngle() {
+      return this._pointerAngle;
+    }
+    set pointerAngle(val) {
+      this._pointerAngle = setProp({
+        val,
+        isValid: isNumber(val) && val >= 0,
+        errorMessage: "Wheel.pointerAngle must be a number between 0 and 360",
+        defaultValue: Defaults.wheel.pointerAngle,
+        action: () => val % 360
+      });
+      if (this.debug) this.refresh();
+    }
+    /**
+     * The radius of the wheel (as a percent of the container's smallest dimension).
+     */
+    get radius() {
+      return this._radius;
+    }
+    set radius(val) {
+      this._radius = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.radius must be a number",
+        defaultValue: Defaults.wheel.radius
+      });
+      this.resize();
+    }
+    /**
+     * The rotation (angle in degrees) of the wheel.
+     * `0` is north.
+     * The first item will be drawn clockwise from this point.
+     */
+    get rotation() {
+      return this._rotation;
+    }
+    set rotation(val) {
+      this._rotation = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.rotation must be a number",
+        defaultValue: Defaults.wheel.rotation
+      });
+      this.refreshCurrentIndex(this.getItemAngles(this._rotation));
+      this.refresh();
+    }
+    /**
+     * The amount that `rotationSpeed` will be reduced by every second until the wheel stops spinning.
+     * Set to `0` to spin the wheel infinitely.
+     */
+    get rotationResistance() {
+      return this._rotationResistance;
+    }
+    set rotationResistance(val) {
+      this._rotationResistance = setProp({
+        val,
+        isValid: isNumber(val),
+        errorMessage: "Wheel.rotationResistance must be a number",
+        defaultValue: Defaults.wheel.rotationResistance
+      });
+    }
+    /**
+     * [Readonly] How fast (angle in degrees) the wheel is spinning every 1 second.
+     * A positive number means the wheel is spinning clockwise, a negative number means anti-clockwise, and `0` means the wheel is not spinning.
+     */
+    get rotationSpeed() {
+      return this._rotationSpeed;
+    }
+    /**
+     * The maximum absolute value for `rotationSpeed`.
+     * The wheel will not spin faster than this value in either direction.
+     */
+    get rotationSpeedMax() {
+      return this._rotationSpeedMax;
+    }
+    set rotationSpeedMax(val) {
+      this._rotationSpeedMax = setProp({
+        val,
+        isValid: isNumber(val) && val >= 0,
+        errorMessage: "Wheel.rotationSpeedMax must be a number >= 0",
+        defaultValue: Defaults.wheel.rotationSpeedMax
+      });
+    }
+    /**
+     * Enter the drag state.
+     */
+    dragStart(point = { x: 0, y: 0 }) {
+      if (this.canvas === null) return;
+      const p = translateXYToElement(point, this.canvas, this.getActualPixelRatio());
+      this.isDragging = true;
+      this.stop();
+      this._dragEvents = [{
+        distance: 0,
+        x: p.x,
+        y: p.y,
+        now: performance.now()
+      }];
+      this.refreshCursor();
+    }
+    dragMove(point = { x: 0, y: 0 }) {
+      if (this.canvas === null) return;
+      const p = translateXYToElement(point, this.canvas, this.getActualPixelRatio());
+      const a = this.getAngleFromCenter(p);
+      const lastDragPoint = this._dragEvents[0];
+      const lastAngle = this.getAngleFromCenter(lastDragPoint);
+      const angleSinceLastMove = diffAngle(lastAngle, a);
+      this._dragEvents.unshift({
+        distance: angleSinceLastMove,
+        x: p.x,
+        y: p.y,
+        now: performance.now()
+      });
+      if (this.debug && this._dragEvents.length >= 40) this._dragEvents.pop();
+      this.rotation += angleSinceLastMove;
+    }
+    /**
+     * Exit the drag state.
+     * Set the rotation speed so the wheel continues to spin in the same direction.
+     */
+    dragEnd() {
+      this.isDragging = false;
+      let dragDistance = 0;
+      const now = performance.now();
+      for (const [i, event] of this._dragEvents.entries()) {
+        if (!this.isDragEventTooOld(now, event)) {
+          dragDistance += event.distance;
+          continue;
+        }
+        this._dragEvents.length = i;
+        if (this.debug) this.refresh();
+        break;
+      }
+      this.refreshCursor();
+      if (dragDistance === 0) return;
+      this.beginSpin(dragDistance * (1e3 / dragCapturePeriod), "interact");
+    }
+    isDragEventTooOld(now = 0, event = {}) {
+      return now - event.now > dragCapturePeriod;
+    }
+    raiseEvent_onCurrentIndexChange(data = {}) {
+      this.onCurrentIndexChange?.({
+        type: "currentIndexChange",
+        currentIndex: this._currentIndex,
+        ...data
+      });
+    }
+    raiseEvent_onRest(data = {}) {
+      this.onRest?.({
+        type: "rest",
+        currentIndex: this._currentIndex,
+        rotation: this._rotation,
+        ...data
+      });
+    }
+    raiseEvent_onSpin(data = {}) {
+      this.onSpin?.({
+        type: "spin",
+        ...data
+      });
+    }
+  };
+
+  // storefront-script/constants.js
+  var LOCAL_KEYS = {
+    SUBSCRIBER_ID: "emailbot_subscriber_id",
+    NEWSLETTER_DENIED: "emailbot_newsletter_denied",
+    SHOP_ID: "emailbot_shop_id",
+    DENIED_COUNT: "emailbot_denied_count",
+    MEDIUM: "emailbot_medium",
+    CAMPAIGN_ID: "emailbot_campaign_id",
+    SUBDOMAIN: "emailbot_subdomain"
+  };
+  var BASE_URL = "https://api.cloud.mailbot.universal-apps.com/store-handler";
+  var REQUEST_METHODS = {
+    POST: "POST",
+    GET: "GET"
+  };
+
+  // storefront-script/index.js
+  document.addEventListener("DOMContentLoaded", checkSubscription());
+  async function checkSubscription() {
+    parseQuery();
+    const is_subscriber = localStorage.getItem(LOCAL_KEYS.SUBSCRIBER_ID);
+    if (is_subscriber) {
+      console.log("***********EmailBot Subscriber Exists 1************");
+      return;
+    }
+    await initiateNewsletter();
+  }
+  var getImage = (isMobile) => {
+    const img = new Image();
+    img.src = isMobile ? "https://all-dev-development.s3.amazonaws.com/email-bot/email-bot-content/spin-wheel-vertical.png" : "https://all-dev-development.s3.amazonaws.com/email-bot/email-bot-content/spin-wheel-horizontal.png";
+    img.alt = "first";
+    return img;
+  };
+  function generateContent(custom_options, isSpinWheel, isMobile) {
+    return `
+      <div style="padding: ${isSpinWheel ? "30px 46px" : isMobile ? "10px 26px" : "30px 0"}  !important; width: ${!isSpinWheel ? "90%" : ""}; margin: ${!isSpinWheel ? "auto" : ""}; ">
+          <div style="font-size: 19px !important; color: #000 !important; margin-bottom: 10px !important; font-weight: 600 !important;
+            text-transform: uppercase !important;
+                text-align: center;
+            ">
+              ${custom_options.title}
+          </div>
+          <div
+              style="font-size: 14px !important; color: #828D99 !important; line-height: normal !important; margin-bottom: 10px !important;">
+              ${custom_options.description}
+          </div>
+      </div>
+  `;
+  }
+  function getRandomReward(rewards) {
+    const totalChance = rewards.reduce((sum, reward) => sum + reward.chance, 0);
+    if (totalChance === 0) return null;
+    const randomNum = Math.random() * totalChance;
+    let cumulativeChance = 0;
+    for (const reward of rewards) {
+      cumulativeChance += reward.chance;
+      if (randomNum < cumulativeChance) {
+        return reward.label;
+      }
+    }
+    return null;
+  }
+  var currentDiscountCode = "";
+  var generateRandomDiscountCode = () => {
+    const characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    let discountCode = "";
+    for (let i = 0; i < 12; i++) {
+      const randomIndex = Math.floor(Math.random() * characters.length);
+      discountCode += characters[randomIndex];
+    }
+    return discountCode;
+  };
+  async function displayNewsletter(options) {
+    const isMobile = isMobileDevice();
+    let time;
+    let html;
+    let wheel;
+    if (isMobile) {
+      time = new Date(options.mobile_timings);
+      html = options.newsletter_templates.body.mobile_html;
+    } else {
+      time = new Date(options.desktop_timings);
+      html = options.newsletter_templates.body.desktop_html;
+    }
+    return new Promise((resolve, reject) => {
+      setTimeout(() => {
+        const div = document.createElement("div");
+        div.classList.add("emailbot-newsletter");
+        div.style.opacity = 0;
+        div.innerHTML = html;
+        document.body.prepend(div);
+        let opacity = 0;
+        let fadeIn = setInterval(() => {
+          if (opacity > 1) {
+            clearInterval(fadeIn);
+          }
+          div.style.opacity = opacity;
+          opacity += 0.01;
+        }, 10);
+        div.addEventListener("click", (e) => {
+          let currentReward = null;
+          if (e.target.classList.contains("discount-code-btn")) {
+            navigator.clipboard.writeText(currentDiscountCode);
+          }
+          if (e.target.classList.contains("mail-bot-shop-now-btn")) {
+            removeDiv(div);
+          }
+          if (e.target.classList.contains("allow-btn")) {
+            const emailInput = document.getElementById(
+              "emailbot-newsletter-input"
+            );
+            const nameInput = document.getElementById(
+              "emailbot-newsletter-input-firstName"
+            );
+            const errorMsg = document.getElementById("errorMsg");
+            const email = emailInput.value;
+            const first_name = nameInput.value;
+            const valid_email = validateEmail(email);
+            if (valid_email && first_name) {
+              if (options.type === "spin_wheel") {
+                const duration = 1500;
+                const winningItemIndex = wheel.items.findIndex(
+                  (data) => data._label === getRandomReward(options.rewards)
+                );
+                wheel.spinToItem(winningItemIndex, duration, true, 20, 1);
+              }
+              setTimeout(
+                () => {
+                  if (options.type === "spin_wheel") {
+                    currentReward = options.rewards.find(
+                      (reward) => reward.label === wheel.items.find(
+                        (_, idx) => idx === wheel.getCurrentIndex()
+                      )._label
+                    );
+                    currentDiscountCode = currentReward.discount.option === "automatically_generated" ? generateRandomDiscountCode() : null;
+                  } else {
+                    currentReward = null;
+                  }
+                  resolve({
+                    entered_email: email,
+                    first_name,
+                    type: options.type,
+                    currentReward
+                  });
+                  const pusDiv = document.querySelectorAll(
+                    ".mail-bot-content-temp"
+                  );
+                  let opacity2 = 1;
+                  let fadeOut = setInterval(() => {
+                    pusDiv.forEach((div2) => {
+                      div2.style.opacity = opacity2;
+                      opacity2 -= 0.01;
+                      if (opacity2 <= 0) {
+                        clearInterval(fadeOut);
+                        div2.remove();
+                        if (options.image_position !== "none" && options.type !== "spin_wheel") {
+                          if (!isMobile)
+                            document.querySelector(
+                              ".newsletter-fixes-1"
+                            ).style.width = "25%";
+                          if (isMobile)
+                            document.querySelector(
+                              ".newsletter-fixes-1"
+                            ).style.minHeight = "max-content";
+                          document.querySelector(
+                            ".newsletter-fixes-1"
+                          ).style.display = "block";
+                          document.querySelector(".newsletter-bg-div").remove();
+                        }
+                        const thankYouDiv = document.querySelector(
+                          ".mail-bot-form-content"
+                        );
+                        thankYouDiv.innerHTML = `<div class="mail-bot-thank-you" >
+              ${generateContent(
+                          {
+                            title: "Thank you for subscribing!",
+                            description: currentReward?.discount?.option !== "no_discount" && options.type === "spin_wheel" ? "Thanks for subscribing. Copy your discount code and apply to your next order." : ""
+                          },
+                          options.type === "spin_wheel",
+                          isMobile
+                        )}
+              ${currentReward?.discount?.discountCode && options.type === "spin_wheel" ? `
+                  <style>
+                    .discount-code-div {
+                      width: 70% !important;
+                      padding: 15px !important;
+                      border: 1px solid #9ca3af !important;
+                      display: flex !important;
+                      justify-content: space-between !important;
+                      border-radius: 6px !important;
+                      height: 54px !important;
+                      margin: auto !important;
+                    }
+                  
+                    .discount-code-text {
+                      font-size: 18px !important;
+                      color: #828D99 !important;
+                      line-height: normal !important;
+                      margin-bottom: 10px !important;
+                    }
+
+                    .discount-code-btn:hover {
+                      background: none;
+                    }
+                    .discount-code-btn {
+                        border: none !important;
+                        background: none !important;
+                        margin-top: -9px;
+                    }
+                    .discount-code-btn > svg {
+                        width: 30px !important;
+                        height: 19px !important;
+                    }
+
+                    </style>
+                  
+                  <div class="discount-code-div">
+                  <div class="discount-code-text">
+                    ${currentReward.discount.discountCode}
+                  </div>
+                  </div> ` : ""}
+              <button class="mail-bot-shop-now-btn" style="    background-color: #000 !important;
+    color: #FFFFFF !important;
+    border: none !important;
+    text-transform: none !important;
+    border-radius: 10px !important;
+    font-size: 14px !important;
+    padding: 0.6rem 1.6rem !important;
+    cursor: pointer !important;
+    margin: ${options.type !== "spin_wheel" ? "auto" : isMobile ? "30px auto auto " : "43px 60px"} !important;
+    display: block !important;
+    font-family: inherit;
+    min-width:${options.type !== "spin_wheel" ? "200px" : ""} !important; 
+    width: ${options.type !== "spin_wheel" ? "auto" : "330px"} !important;
+    opacity: 0.9;"> Shop now
+              </button>
+            </div>`;
+                      }
+                    });
+                  }, 10);
+                },
+                options.type !== "spin_wheel" ? 500 : 2500
+              );
+            } else if (!valid_email) {
+              errorMsg.textContent = "Please provide a valid email address.";
+            } else {
+              errorMsg.textContent = "Please provide your name.";
+            }
+          } else if (e.target.classList.contains("cancel-btn")) {
+            resolve(false);
+            removeDiv(div);
+          }
+        });
+        if (document.readyState !== "loading" && options.type === "spin_wheel") {
+          const spinWheelProps = {
+            items: [
+              ...options.rewards.map((reward) => {
+                return { label: reward.label };
+              }),
+              ...options.rewards.map((reward) => {
+                return { label: reward.label };
+              })
+            ],
+            borderWidth: 0,
+            debug: false,
+            image: null,
+            isInteractive: false,
+            itemBackgroundColors: [
+              ...options.rewards.map((reward) => {
+                return reward.backgroundColor;
+              }),
+              ...options.rewards.map((reward) => {
+                return reward.backgroundColor;
+              })
+            ],
+            itemLabelAlign: "right",
+            itemLabelBaselineOffset: 0,
+            itemLabelColors: [
+              ...options.rewards.map((reward) => {
+                return reward.color;
+              }),
+              ...options.rewards.map((reward) => {
+                return reward.color;
+              })
+            ],
+            itemLabelFont: "sans-serif",
+            itemLabelFontSizeMax: 28,
+            itemLabelRadius: 0.85,
+            itemLabelRadiusMax: 0.18,
+            itemLabelRotation: 0,
+            itemLabelStrokeColor: "#ffffff",
+            itemLabelStrokeWidth: 0,
+            lineColor: "#000",
+            lineWidth: 0,
+            overlayImage: null,
+            pixelRatio: 0,
+            pointerAngle: isMobile ? 190 : 100,
+            radius: 0.95,
+            rotationResistance: -100,
+            rotationSpeedMax: 1e3
+          };
+          const spinWheelDiv = document.querySelector(".spin-wheel-email-bot");
+          if (spinWheelDiv) {
+            wheel = new Wheel(spinWheelDiv, spinWheelProps);
+            wheel.overlayImage = getImage(isMobile);
+          } else {
+            console.log("SpinWheelDiv div not found...!!!");
+          }
+        }
+      }, time);
+    });
+  }
+  async function initiateNewsletter() {
+    const SHOP_NAME = localStorage.getItem(LOCAL_KEYS.SUBDOMAIN);
+    const resp = await makeRequest({
+      req_method: REQUEST_METHODS.GET,
+      req_url: `${BASE_URL}?shop_name=${SHOP_NAME}&get_settings=true`
+    });
+    const newsletter_settings = resp.body.settings;
+    if (newsletter_settings === null) {
+      console.log("BOTH MAILBOT POPUP'S DISABLED !!");
+      return;
+    }
+    const today = Date.now();
+    const { frequency, max_count } = newsletter_settings;
+    const maxCount = max_count ? +max_count : 2;
+    const fr = frequency ? +frequency : 1;
+    const count = localStorage.getItem(LOCAL_KEYS.DENIED_COUNT);
+    const denied_date = localStorage.getItem(LOCAL_KEYS.NEWSLETTER_DENIED);
+    if (denied_date) {
+      if (+count >= maxCount) {
+        const dayPassed = setDays(fr ? fr : 1, +denied_date);
+        const isAfter = dayPassed < today;
+        if (isAfter) {
+          localStorage.setItem(LOCAL_KEYS.DENIED_COUNT, 0);
+        } else {
+          return;
+        }
+      } else {
+        const afterTwoHr = setHours(2, +denied_date);
+        const isAfter = afterTwoHr < today;
+        if (!isAfter) return;
+      }
+    }
+    const { entered_email, first_name, type, currentReward } = await displayNewsletter(newsletter_settings);
+    if (entered_email) {
+      const name = first_name.split(" ");
+      const subscriber_response = await makeRequest({
+        req_method: REQUEST_METHODS.POST,
+        req_url: BASE_URL,
+        req_body: {
+          create_subscriber: true,
+          shop_id: newsletter_settings.shop_id,
+          email: entered_email,
+          first_name: name[0],
+          last_name: name[1],
+          shop_name: SHOP_NAME,
+          type,
+          currentReward
+        }
+      });
+      if (subscriber_response.body.subscriber) {
+        if (type === "spin_wheel") {
+          currentDiscountCode = currentReward.discount.discountCode;
+        }
+        const subscriber = subscriber_response.body.subscriber;
+        localStorage.setItem(LOCAL_KEYS.SUBSCRIBER_ID, subscriber.id);
+      } else {
+        if (type !== "spin_wheel") {
+          document.querySelector(".emailbot-newsletter").remove();
+          showSuccessPopup(
+            "Subscription failed: Please try again or contact support for assistance."
+          );
+        }
+      }
+      return;
+    } else {
+      localStorage.setItem(LOCAL_KEYS.NEWSLETTER_DENIED, Date.now());
+      let old_count = localStorage.getItem(LOCAL_KEYS.DENIED_COUNT);
+      if (old_count) {
+        localStorage.setItem(LOCAL_KEYS.DENIED_COUNT, +old_count + 1);
+      } else {
+        localStorage.setItem(LOCAL_KEYS.DENIED_COUNT, 1);
+      }
+      return;
+    }
+  }
+  async function makeRequest({ req_method, req_url, req_body = {} }) {
+    try {
+      const request_options = {
+        method: req_method,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      };
+      if (req_method == REQUEST_METHODS.POST) {
+        request_options.body = JSON.stringify(req_body);
+      }
+      const res = await fetch(req_url, request_options);
+      if (res.statusCode == 200) {
+        return res;
+      }
+      return res.json();
+    } catch (error) {
+      console.log(error);
+      throw new Error("Error in making request", error.message);
+    }
+  }
+  function setHours(hr = 1, d = Date.now()) {
+    const date = new Date(d);
+    date.setHours(date.getHours() + hr);
+    return date.getTime();
+  }
+  function setDays(day = 1, d = Date.now()) {
+    const date = new Date(d);
+    date.setDate(date.getDate() + day);
+    return date.getTime();
+  }
+  function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+  }
+  function validateEmail(email) {
+    const regex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return regex.test(email);
+  }
+  function removeDiv(pusDiv) {
+    let opacity = 1;
+    let fadeOut = setInterval(() => {
+      pusDiv.style.opacity = opacity;
+      opacity -= 0.01;
+      if (opacity <= 0) {
+        clearInterval(fadeOut);
+        pusDiv.remove();
+      }
+    }, 10);
+  }
+  function parseQuery() {
+    const obj = {};
+    let shop_name = localStorage.getItem(LOCAL_KEYS.SUBDOMAIN);
+    if (!shop_name) {
+      shop_name = window.Shopify.shop;
+      localStorage.setItem(LOCAL_KEYS.SUBDOMAIN, shop_name);
+    }
+    if (window.location.search === "") return obj;
+    const arr = window.location.search.replace("?", "").split("&");
+    arr.forEach((a) => {
+      const split = a.split("=");
+      obj[split[0]] = split[1];
+    });
+    if (obj.utm_source && obj.utm_source === "emailbot") {
+      localStorage.setItem(LOCAL_KEYS.CAMPAIGN_ID, obj.utm_campaign_id);
+      localStorage.setItem(LOCAL_KEYS.SUBSCRIBER_ID, obj.subscriber_id);
+      localStorage.setItem(LOCAL_KEYS.MEDIUM, obj.utm_medium);
+      localStorage.setItem("emailbot_last_clicked", /* @__PURE__ */ new Date());
+    }
+  }
+  function showSuccessPopup(message) {
+    const successDiv = document.createElement("div");
+    successDiv.style.position = "fixed";
+    successDiv.style.top = "50%";
+    successDiv.style.left = "50%";
+    successDiv.style.transform = "translate(-50%, -50%)";
+    successDiv.style.backgroundColor = "white";
+    successDiv.style.border = "1px solid #ccc";
+    successDiv.style.padding = "20px";
+    successDiv.style.zIndex = "1000";
+    successDiv.style.boxShadow = "0 2px 10px rgba(0, 0, 0, 0.1)";
+    successDiv.style.borderRadius = "5px";
+    successDiv.style.textAlign = "center";
+    const contentDiv = document.createElement("div");
+    contentDiv.classList.add("popup-content");
+    const messageParagraph = document.createElement("p");
+    messageParagraph.textContent = message;
+    contentDiv.appendChild(messageParagraph);
+    const closeButton = document.createElement("button");
+    closeButton.textContent = "Close";
+    closeButton.style.marginTop = "10px";
+    closeButton.style.padding = "10px 20px";
+    closeButton.style.backgroundColor = "#007bff";
+    closeButton.style.color = "white";
+    closeButton.style.border = "none";
+    closeButton.style.borderRadius = "5px";
+    closeButton.style.cursor = "pointer";
+    closeButton.addEventListener("mouseover", () => {
+      closeButton.style.backgroundColor = "#0056b3";
+    });
+    closeButton.addEventListener("mouseout", () => {
+      closeButton.style.backgroundColor = "#007bff";
+    });
+    closeButton.addEventListener("click", () => {
+      successDiv.remove();
+    });
+    successDiv.appendChild(contentDiv);
+    successDiv.appendChild(closeButton);
+    document.body.append(successDiv);
+  }
+})();
